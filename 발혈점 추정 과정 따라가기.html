@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>발혈점 추정 과정 따라가기</title>
+<style>
+:root{--bg:#eceff2;--panel:#fff;--ink:#18232e;--mute:#5b6a78;--line:#cdd5dc;--grid:#dde3e9;--wall:rgba(255,255,255,.8);--blood:#9e1520;--trace:#2f6f9f;--est:#d98c00;--true:#1f8a5b;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12181e;--panel:#1b232b;--ink:#e6ebef;--mute:#93a2b0;--line:#32404c;--grid:#2a3641;--wall:rgba(44,58,72,.6);--blood:#e03a48;--trace:#6bb2e0;--est:#ffb81f;--true:#4fcf9a}}
+:root[data-theme="dark"]{--bg:#12181e;--panel:#1b232b;--ink:#e6ebef;--mute:#93a2b0;--line:#32404c;--grid:#2a3641;--wall:rgba(44,58,72,.6);--blood:#e03a48;--trace:#6bb2e0;--est:#ffb81f;--true:#4fcf9a}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 "Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",system-ui,sans-serif}
+main{max-width:760px;margin:0 auto;padding:12px 12px 0;display:grid;gap:10px}
+h1{font-size:18px;margin:0;line-height:1.3}h2{font-size:16px;margin:0 0 6px}
+.sub{margin:2px 0 0;color:var(--mute);font-size:13px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+canvas{display:block;width:100%;aspect-ratio:4/3.2;max-height:62vh;touch-action:none;cursor:grab;border-radius:6px}
+.bar{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center}
+button{font:inherit;font-size:13px;padding:7px 11px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:6px;cursor:pointer}
+button:focus-visible{outline:2px solid var(--trace);outline-offset:1px}button:disabled{opacity:.4;cursor:default}
+.pri{background:var(--blood);border-color:var(--blood);color:#fff}
+.steps{display:flex;gap:6px}.chip{flex:1;padding:6px 0}.chip.done{border-color:var(--blood)}.chip.on{background:var(--blood);border-color:var(--blood);color:#fff}
+.tw{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:13px}
+th{color:var(--mute);font-weight:600;text-align:left;padding:3px 6px;font-size:12px}td{padding:4px 6px}
+tbody tr{cursor:pointer}tr.on{background:var(--bg)}
+.note{font-size:12px;color:var(--mute);margin:6px 0 0}
+.ex p{margin:6px 0;font-size:14px;overflow-wrap:anywhere}
+.nav{position:sticky;bottom:0;display:flex;gap:8px;padding:8px 0 calc(8px + env(safe-area-inset-bottom,0px));background:var(--bg)}
+.nav button{padding:11px;font-size:14px;font-weight:700}#nx{flex:1}
+</style>
+</head>
+<body>
+<main>
+<header><h1>발혈점 추정 과정 따라가기</h1>
+<p class="sub">랜덤 혈흔에서 출발해 충돌각 → 수렴점 → 탄젠트법 높이 → 발혈점까지, 버튼으로 한 단계씩 확인해요.</p></header>
+<div class="steps" id="sp"></div>
+<section class="card"><canvas id="cv" aria-label="혈흔 분석 화면"></canvas>
+<div class="bar"><button id="v1">처음 보기</button><button id="v2">비스듬히 보기</button><button id="fl"></button><button id="nw">새 혈흔 뽑기</button></div>
+<p class="note" id="mgn"></p></section>
+<section class="card ex" id="inf"></section>
+<section class="card"><div class="tw"><table><thead id="th"></thead><tbody id="tb"></tbody></table></div><p class="note">행을 누르면 그 혈흔의 계산이 위에 나와요.</p></section>
+<nav class="nav"><button id="pv">◀ 이전</button><button id="nx" class="pri"></button></nav>
+</main>
+<script>
+const $=i=>document.getElementById(i),R=Math.PI/180,cl=(v,a,b)=>Math.min(b,Math.max(a,v)),f=(v,d=1)=>(+v).toFixed(d),rd=v=>Math.round(v*10)/10;
+const rng=s=>()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};
+const gauss=r=>Math.sqrt(-2*Math.log(r()||1e-9))*Math.cos(2*Math.PI*r());
+const nzf=(t,s)=>1+.06*Math.sin(3*t+s)+.04*Math.sin(7*t+s*2.3)+.025*Math.sin(13*t+s*.7);
+let floor=true,seed=Math.random()*1e9|0,S=[],O=null,C=null,IX=[],Hm=0,stage=0,sel=0,yaw=0,pit=1.5,zm=1,pro=1;
+const W3=(a,b,h)=>floor?[a,b,h]:[a,h,b],alp=s=>Math.asin(Math.min(1,s.W/s.L));
+const NX=['충돌각 구하기','방향선 긋기','수렴점 찾기','수평 거리 재기','탄젠트로 높이 구하기','발혈점 확인'];
+
+function analyze(){
+ IX=[];const U=S.map(s=>[Math.cos(s.phi*R),Math.sin(s.phi*R)]);
+ for(let i=0;i<S.length;i++)for(let j=i+1;j<S.length;j++){
+  const u=U[i],v=U[j],cr=u[0]*v[1]-u[1]*v[0];if(Math.abs(cr)<.2)continue;
+  const w=[S[j].x-S[i].x,S[j].z-S[i].z],t=(w[0]*v[1]-w[1]*v[0])/cr,k=(w[0]*u[1]-w[1]*u[0])/cr;
+  if(t<0&&k<0)IX.push([S[i].x+t*u[0],S[i].z+t*u[1]]);
+ }
+ if(IX.length<4)return false;
+ C=[IX.reduce((a,p)=>a+p[0],0)/IX.length,IX.reduce((a,p)=>a+p[1],0)/IX.length];
+ S.forEach(s=>{s.a=alp(s)/R;s.d=Math.hypot(s.x-C[0],s.z-C[1]);s.H=s.d*Math.tan(alp(s))});
+ Hm=S.reduce((a,s)=>a+s.H,0)/S.length;
+ return Hm<220&&C[0]>-50&&C[0]<250;
+}
+function gen(){
+ for(let tr=0;tr<200;tr++){
+  const r=rng(seed+tr*7919),ox=70+r()*60,ob=55+r()*45,oh=60+r()*70,a0=(35+r()*25)*R,p0=(r()*100-20)*R,t=oh/Math.sin(a0),cx0=ox+t*Math.cos(a0)*Math.cos(p0),cz0=ob+t*Math.cos(a0)*Math.sin(p0),L=[];
+  for(let i=0;i<60&&L.length<6;i++){
+   const x=cx0+(r()*2-1)*28,z=cz0+(r()*2-1)*24;if(x<8||x>192||z<8||z>142)continue;
+   const dx=x-ox,dz=z-ob,d=Math.hypot(dx,dz,oh),at=Math.asin(oh/d);if(at<20*R||at>70*R)continue;
+   const W=4+r()*5,Lt=W/Math.sin(at);
+   L.push({x:rd(x),z:rd(z),W:rd(W),L:rd(Math.max(W,Lt*(1+gauss(r)*.03))),phi:rd(Math.atan2(dz,dx)/R+gauss(r)*1.5)});
+  }
+  if(L.length<5)continue;
+  S=L;O=[ox,ob,oh];if(analyze())return;
+ }
+}
+
+const cv=$('cv'),cx=cv.getContext('2d');
+function view(w,h){
+ const xs=S.map(s=>s.x).concat(C[0]),zs=S.map(s=>s.z).concat(C[1]),x0=Math.min(...xs),x1=Math.max(...xs),z0=Math.min(...zs),z1=Math.max(...zs),mx=(x0+x1)/2,mz=(z0+z1)/2,sp=Math.max(x1-x0+40,(z1-z0+40)*w/h),mH=Math.max(...S.map(s=>s.H));
+ return stage>=5?{c:W3(mx,mz,mH/3),sp:Math.max(sp,mH*1.5+60)}:{c:W3(mx,mz,0),sp};
+}
+function P(p,w,h,v){const c0=p[0]-v.c[0],c1=-(p[1]-v.c[1]),c2=p[2]-v.c[2],cy=Math.cos(yaw),sy=Math.sin(yaw),x1=c0*cy-c1*sy,y1=c0*sy+c1*cy,sn=Math.sin(pit),cs=Math.cos(pit),sY=y1*sn+c2*cs,dp=y1*cs-c2*sn,k=w*zm/v.sp*520/(520+dp);return[w/2+x1*k,h/2-sY*k]}
+function draw(){
+ const dpr=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;if(!w||!S.length)return;cv.width=w*dpr;cv.height=h*dpr;cx.setTransform(dpr,0,0,dpr,0,0);
+ const c=getComputedStyle(document.documentElement),g=n=>c.getPropertyValue(n).trim(),v=view(w,h),pr=p=>P(p,w,h,v),ln=(a,b)=>{const p=pr(a),q=pr(b);cx.moveTo(p[0],p[1]);cx.lineTo(q[0],q[1])};
+ const k0=w*zm/v.sp,mg=stage>=5?8:5,tx=(t,x,y,col)=>{cx.fillStyle=g(col||'--ink');cx.fillText(t,x,y)},dot=(o,r,col)=>{cx.beginPath();cx.arc(o[0],o[1],r,0,7);cx.fillStyle=g(col);cx.fill()};
+ cx.font='12px sans-serif';
+ cx.beginPath();[[0,0],[200,0],[200,150],[0,150]].forEach((q,i)=>{const p=pr(W3(q[0],q[1],0));i?cx.lineTo(p[0],p[1]):cx.moveTo(p[0],p[1])});cx.closePath();cx.fillStyle=g('--wall');cx.fill();cx.strokeStyle=g('--line');cx.lineWidth=1.5;cx.stroke();
+ cx.beginPath();cx.lineWidth=1;cx.strokeStyle=g('--grid');for(let a=10;a<200;a+=10)ln(W3(a,0,0),W3(a,150,0));for(let b=10;b<150;b+=10)ln(W3(0,b,0),W3(200,b,0));cx.stroke();
+ const E=S.map(s=>({u:[Math.cos(s.phi*R),Math.sin(s.phi*R)],p:W3(s.x,s.z,0)}));
+ if(stage>=2)S.forEach((s,i)=>{const e=E[i];cx.beginPath();ln(e.p,W3(s.x-e.u[0]*170,s.z-e.u[1]*170,0));cx.strokeStyle=g('--trace');cx.globalAlpha=stage>=5?.4:(i==sel?1:.7);cx.lineWidth=i==sel?2:1.2;cx.stroke();cx.globalAlpha=1});
+ S.forEach((s,i)=>{
+  const u=E[i].u,A=s.L/10*mg/2,B=s.W/10*mg/2,pt=(a,b)=>pr(W3(s.x+a*u[0]-b*u[1],s.z+a*u[1]+b*u[0],0)),o0=pr(E[i].p),tip=pt(A,0),rr=Math.hypot(tip[0]-o0[0],tip[1]-o0[1])+1,kp=rr/A;
+  cx.beginPath();for(let k=0;k<=48;k++){const t=k/48*2*Math.PI,ct=Math.cos(t),z=nzf(t,i+1),o=pt(A*ct*z,B*Math.sin(t)*z*(ct>0?1-.55*ct:1));k?cx.lineTo(o[0],o[1]):cx.moveTo(o[0],o[1])}
+  const gr=cx.createRadialGradient(o0[0],o0[1],0,o0[0],o0[1],rr);gr.addColorStop(0,'#4d0a10');gr.addColorStop(1,g('--blood'));cx.fillStyle=gr;cx.fill();
+  cx.fillStyle=g('--blood');[[1.5,.5,.12],[2.1,-.6,.08],[2.8,.2,.05]].forEach(([m1,m2,m3])=>{const o=pt(A*m1,B*m2);cx.beginPath();cx.arc(o[0],o[1],Math.max(1,B*kp*m3*3),0,7);cx.fill()});
+  if(stage>=1&&stage<5)tx(f(s.a,0)+'°',o0[0]+10,o0[1]-10);
+  if(i==sel){cx.beginPath();cx.arc(o0[0],o0[1],13,0,7);cx.strokeStyle=g('--est');cx.lineWidth=2;cx.stroke()}
+ });
+ if(stage>=3){cx.globalAlpha=.55;IX.forEach(q=>dot(pr(W3(q[0],q[1],0)),3,'--est'));cx.globalAlpha=1;const o=pr(W3(C[0],C[1],0));dot(o,7,'--est');cx.strokeStyle=g('--ink');cx.lineWidth=1.5;cx.stroke();tx('수렴점 C',o[0]+10,o[1]+16)}
+ if(stage==4)S.forEach((s,i)=>{cx.save();cx.setLineDash([5,4]);cx.beginPath();ln(E[i].p,W3(C[0],C[1],0));cx.strokeStyle=g('--mute');cx.lineWidth=i==sel?2:1;cx.stroke();cx.restore();if(i==sel){const m=pr(W3((s.x+C[0])/2,(s.z+C[1])/2,0));tx('d = '+f(s.d)+' cm',m[0]+6,m[1]-6)}});
+ if(stage>=5){
+  const top=Math.max(...S.map(s=>s.H));cx.save();cx.setLineDash([4,4]);cx.beginPath();ln(W3(C[0],C[1],0),W3(C[0],C[1],top*1.15));cx.strokeStyle=g('--ink');cx.globalAlpha=.6;cx.stroke();cx.restore();
+  S.forEach((s,i)=>{const a=W3(s.x,s.z,0),b=W3(C[0],C[1],s.H),q=a.map((x,k)=>x+(b[k]-x)*pro),p=pr(a),r=pr(q);cx.beginPath();cx.moveTo(p[0],p[1]);cx.lineTo(r[0],r[1]);cx.strokeStyle=g('--trace');cx.lineWidth=i==sel?2.6:1.5;cx.stroke();if(pro>=1){dot(r,3.5,'--est');if(i==sel)tx('H = '+f(s.H)+' cm',r[0]+8,r[1]-6)}});
+ }
+ if(stage==6){
+  const hs=S.map(s=>s.H);cx.beginPath();ln(W3(C[0],C[1],Math.min(...hs)),W3(C[0],C[1],Math.max(...hs)));cx.strokeStyle=g('--est');cx.globalAlpha=.35;cx.lineWidth=8;cx.lineCap='round';cx.stroke();cx.globalAlpha=1;cx.lineCap='butt';
+  const e=pr(W3(C[0],C[1],Hm));dot(e,7,'--est');cx.strokeStyle=g('--ink');cx.lineWidth=1.5;cx.stroke();tx('추정 발혈점',e[0]+10,e[1]+4);
+  const o=pr(W3(O[0],O[1],O[2]));cx.strokeStyle=g('--true');cx.lineWidth=2.5;cx.beginPath();cx.moveTo(o[0]-7,o[1]-7);cx.lineTo(o[0]+7,o[1]+7);cx.moveTo(o[0]+7,o[1]-7);cx.lineTo(o[0]-7,o[1]+7);cx.stroke();tx('가상 실제 발혈점',o[0]+10,o[1]-8,'--true');
+ }
+ if(stage<5){cx.strokeStyle=g('--ink');cx.lineWidth=2;cx.beginPath();cx.moveTo(12,h-14);cx.lineTo(12+10*k0,h-14);cx.stroke();tx('10 cm',12,h-20);tx(floor?'바닥을 위에서 본 모습':'벽을 정면에서 본 모습',12,18,'--mute')}
+}
+
+function fig(s){
+ const a=s.a*R,ca=Math.cos(a),sa=Math.sin(a),Lp=200,Wp=Lp*sa,x0=130,y0=190,e=(x,y)=>x.toFixed(1)+','+y.toFixed(1),pl=floor?'바닥':'벽면';
+ const Q=[x0-70*ca,y0-70*sa],Q2=[Q[0]+sa*Wp,Q[1]-ca*Wp],T=[x0-100*ca,y0-100*sa],st=c=>`style="stroke:var(${c});fill:none"`,tx=(x,y,t)=>`<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" style="fill:var(--ink);font-size:13px">${t}</text>`;
+ return `<svg viewBox="0 0 400 230" role="img" aria-label="충돌각 정사영 단면도" style="display:block;width:100%;max-width:520px;height:auto;margin:8px auto">`+
+ `<line x1="30" y1="${y0}" x2="385" y2="${y0}" style="stroke:var(--ink);stroke-width:3"/>`+
+ `<path d="M${e(x0,y0)} L${e(x0-120*ca,y0-120*sa)} M${e(x0+Lp,y0)} L${e(x0+Lp-120*ca,y0-120*sa)}" ${st('--trace')} stroke-width="2"/>`+
+ `<line x1="${x0}" y1="${y0}" x2="${x0+Lp}" y2="${y0}" style="stroke:var(--blood);stroke-width:7;stroke-linecap:round"/>`+
+ `<path d="M${e(Q[0],Q[1])} L${e(Q2[0],Q2[1])}" ${st('--ink')} stroke-width="2" stroke-dasharray="4 3"/>`+
+ `<path d="M${e(Q[0]+7*ca,Q[1]+7*sa)} L${e(Q[0]+7*ca+7*sa,Q[1]+7*sa-7*ca)} L${e(Q[0]+7*sa,Q[1]-7*ca)}" ${st('--ink')} stroke-width="1.2"/>`+
+ `<path d="M${e(x0-36,y0)} A36 36 0 0 1 ${e(x0-36*ca,y0-36*sa)}" ${st('--est')} stroke-width="2"/>`+
+ `<path d="M${e(T[0],T[1])} L${e(T[0]-10*ca-4*sa,T[1]-10*sa+4*ca)} L${e(T[0]-10*ca+4*sa,T[1]-10*sa-4*ca)}Z" style="fill:var(--ink)"/>`+
+ tx(x0-64,y0-8,'α')+tx(x0+Lp/2-40,y0+22,'L = '+s.L+' mm')+tx((Q[0]+Q2[0])/2+8,(Q[1]+Q2[1])/2,'W = '+s.W+' mm')+tx(34,y0+22,pl)+tx(T[0]+14,T[1]-10,'비행 방향')+'</svg>';
+}
+function info(){
+ const s=S[sel],n=sel+1,hn=floor?'높이':'벽에서 떨어진 거리',pl=floor?'바닥':'벽',ph=s.phi*R,hs=S.map(t=>t.H),mn=Math.min(...hs),mx=Math.max(...hs),er=Math.hypot(C[0]-O[0],C[1]-O[1],Hm-O[2]);
+ return[
+ `<h2>1. 혈흔 관찰</h2><p>${pl}에 가상의 혈흔 ${S.length}개가 생겼어요. 각 혈흔의 폭 W와 길이 L을 mm로 쟀고, 뾰족한 꼬리가 향하는 쪽이 혈액이 날아간 방향이에요.</p><p>충돌각이 아주 작거나 90°에 가까운 혈흔은 신뢰도가 낮아 미리 뺐어요. 발혈점은 마지막에 공개돼요.</p>`,
+ `<h2>2. 충돌각 구하기</h2><p>둥근 핏방울이 비스듬히 부딪힐수록 얼룩은 길쭉해져요. 얼룩(타원)을 비행 방향에 수직인 평면에 정사영하면 지름 W인 원이 되고, 두 평면이 이루는 각은 90° − α예요. 정사영의 넓이 S′ = S·cos(90° − α)에서 sin α = W/L이 나와요.</p><p>혈흔 ${n}: sin α = ${s.W}/${s.L} = ${f(s.W/s.L,3)} → α = <b>${f(s.a,2)}°</b></p>${fig(s)}<p class="note">옆에서 본 단면도예요(W : L 비율만 맞춘 그림). 파란 두 선은 핏방울 양쪽 가장자리의 경로, 점선 W는 비행 방향에 수직인 평면을 옆에서 본 모습이에요. 이 평면으로 정사영하면 ${pl} 위의 길이 L짜리 얼룩이 지름 W인 원이 돼요. 직각삼각형으로 보면 빗변이 L, 높이가 W라서 sin α = W/L이에요.</p>`,
+ `<h2>3. 방향선 긋기</h2><p>장축 방향의 단위벡터 u = (cosφ, sinφ)를 잡고, 꼬리 반대쪽으로 직선을 연장해요(평면벡터와 직선의 방정식): (x, y) = (x₀, y₀) − t·u, t > 0</p><p>혈흔 ${n}: φ = ${s.phi}°, u = (${f(Math.cos(ph),3)}, ${f(Math.sin(ph),3)}) → (x, y) = (${f(s.x)}, ${f(s.z)}) − t·(${f(Math.cos(ph),3)}, ${f(Math.sin(ph),3)})</p>`,
+ `<h2>4. 수렴점 찾기</h2><p>직선을 둘씩 연립해 교점 ${IX.length}개를 구했어요(주황 점). 측정 오차 때문에 한 곳에 정확히 모이지 않아서, 교점들의 평균을 수렴점 C로 잡아요.</p><p>수렴점 C = (${f(C[0])}, ${f(C[1])}) cm. 이건 ${pl} 위 위치만 알려 줘요. ${hn}는 다음 단계에서 구해요.</p>`,
+ `<h2>5. 수평 거리 d 재기</h2><p>혈흔에서 수렴점까지 ${pl} 위의 거리예요(좌표평면에서 두 점 사이의 거리): d = √((x − Cx)² + (y − Cy)²)</p><p>혈흔 ${n}: d = √((${f(s.x)} − ${f(C[0])})² + (${f(s.z)} − ${f(C[1])})²) = <b>${f(s.d,2)} cm</b></p>`,
+ `<h2>6. 탄젠트법으로 ${hn} 구하기</h2><p>발혈점에서 ${pl}에 내린 수선의 발이 수렴점 C예요. 혈흔 P, 수렴점 C, 발혈점은 C에서 직각인 직각삼각형을 이루고, P의 각이 충돌각 α예요. 그래서 tan α = H/d, 즉 H = d·tan α예요. 실 연결법은 각 혈흔에서 실을 충돌각만큼 들어 올려 C 위에서 만나게 하는 방법이에요(파란 선).</p><p>혈흔 ${n}: H = ${f(s.d,2)} × tan ${f(s.a,2)}° = <b>${f(s.H,2)} cm</b></p><p>${hn} 범위 ${f(mn)} ~ ${f(mx)} cm (기원 영역)</p>`,
+ `<h2>7. 발혈점 위치</h2><p>${hn}들의 평균을 발혈점의 ${hn}로 잡아요: H̄ = ${f(Hm,1)} cm</p><p>추정 발혈점: ${pl} 위 (${f(C[0])}, ${f(C[1])}) cm 지점에서 ${hn} <b>${f(Hm,1)} cm</b></p><p>가상 실제 발혈점은 (${f(O[0])}, ${f(O[1])}) cm 지점에서 ${f(O[2])} cm였고, 추정과의 차이는 <b>${f(er,1)} cm</b>예요.</p><p class="note">실제 감식에서는 측정 오차와, 핏방울이 중력으로 휘는 효과 때문에 한 점이 아니라 ‘영역’으로 해석해요. 직선 궤적을 가정하면 ${hn}가 실제보다 높게 나오는 경향이 있어요.</p>`
+ ][stage];
+}
+function table(){
+ const c=['#','W(mm)','L(mm)'];if(stage>=1)c.push('W÷L','α');if(stage>=4)c.push('d(cm)');if(stage>=5)c.push('H(cm)');
+ $('th').innerHTML='<tr>'+c.map(x=>'<th>'+x+'</th>').join('')+'</tr>';
+ $('tb').innerHTML=S.map((s,i)=>'<tr data-i="'+i+'" class="'+(i==sel?'on':'')+'"><td>'+(i+1)+'</td><td>'+s.W+'</td><td>'+s.L+'</td>'+(stage>=1?'<td>'+f(s.W/s.L,3)+'</td><td><b>'+f(s.a)+'°</b></td>':'')+(stage>=4?'<td>'+f(s.d)+'</td>':'')+(stage>=5?'<td><b>'+f(s.H)+'</b></td>':'')+'</tr>').join('');
+}
+function render(){
+ $('sp').innerHTML=[0,1,2,3,4,5,6].map(i=>'<button class="chip'+(i==stage?' on':i<stage?' done':'')+'" data-s="'+i+'" aria-label="단계 '+(i+1)+'">'+(i+1)+'</button>').join('');
+ $('inf').innerHTML=info();table();
+ $('pv').disabled=stage==0;$('nx').textContent=stage<6?'다음: '+NX[stage]+' ▶':'새 혈흔으로 다시 해보기';
+ $('fl').textContent=floor?'바닥 혈흔 모드':'벽 혈흔 모드';
+ $('mgn').textContent='혈흔은 보기 쉽게 '+(stage>=5?8:5)+'배 확대해서 그렸어요. 화면을 드래그하면 돌려 볼 수 있어요.';
+ draw();
+}
+const front=()=>{yaw=0;pit=floor?1.5:0;zm=1},oblique=()=>{yaw=.65;pit=floor?.5:.25;zm=1};
+function setStage(n){
+ stage=cl(n,0,6);stage>=5?oblique():front();
+ if(stage==5){pro=0;const t0=performance.now();(function L(){pro=Math.min(1,(performance.now()-t0)/1200);draw();if(pro<1)requestAnimationFrame(L)})()}else pro=1;
+ render();
+}
+function newCase(){seed=Math.random()*1e9|0;gen();sel=0;setStage(0)}
+
+let dr=null;
+cv.addEventListener('pointerdown',e=>{dr=[e.clientX,e.clientY];cv.setPointerCapture(e.pointerId);cv.style.cursor='grabbing'});
+cv.addEventListener('pointermove',e=>{if(!dr)return;yaw+=(e.clientX-dr[0])*.01;pit=cl(pit+(e.clientY-dr[1])*.01,-.3,1.55);dr=[e.clientX,e.clientY];draw()});
+['pointerup','pointercancel'].forEach(n=>cv.addEventListener(n,()=>{dr=null;cv.style.cursor='grab'}));
+cv.addEventListener('wheel',e=>{e.preventDefault();zm=cl(zm*(e.deltaY<0?1.1:.9),.5,4);draw()},{passive:false});
+$('v1').onclick=()=>{front();draw()};$('v2').onclick=()=>{oblique();draw()};
+$('fl').onclick=()=>{floor=!floor;newCase()};$('nw').onclick=newCase;
+$('pv').onclick=()=>setStage(stage-1);$('nx').onclick=()=>stage<6?setStage(stage+1):newCase();
+$('sp').addEventListener('click',e=>{const b=e.target.closest('[data-s]');if(b)setStage(+b.dataset.s)});
+$('tb').addEventListener('click',e=>{const tr=e.target.closest('tr');if(!tr)return;sel=+tr.dataset.i;$('inf').innerHTML=info();table();draw()});
+addEventListener('resize',draw);
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+newCase();
+</script>
+</body>
+</html>
